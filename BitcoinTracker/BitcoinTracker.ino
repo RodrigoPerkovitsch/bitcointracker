@@ -42,6 +42,12 @@ const int LARGURA_TELA = 128;
 const int ALTURA_TELA  = 64;
 const uint8_t ENDERECO_OLED = 0x3C;  // se a tela ficar preta, teste 0x3D
 
+// Na montagem da protoboard (veja MONTAGEM.md) o OLED fica com os pinos na
+// fileira de cima e a tela para fora da borda, ou seja, de cabeça para baixo.
+// true gira a imagem 180° para o texto ficar legível. Se montarem o OLED na
+// posição normal (pinos em cima da tela), troque para false.
+const bool GIRAR_TELA_180 = true;
+
 // ---------------- Tempos ----------------
 const unsigned long INTERVALO_BUSCA_MS   = 60UL * 1000;  // consulta automática
 const unsigned long INTERVALO_MINIMO_MS  = 15UL * 1000;  // o botão não força antes disso (limite da API gratuita)
@@ -500,6 +506,7 @@ void setup() {
   // Se o OLED falhar o programa segue: a página web continua útil e o erro
   // aparece no monitor serial. O código original travava aqui.
   telaOk = tela.begin(SSD1306_SWITCHCAPVCC, ENDERECO_OLED);
+  if (telaOk && GIRAR_TELA_180) tela.setRotation(2);
   if (!telaOk) {
     Serial.println("OLED nao encontrado. Confira SDA=21, SCL=22 e o endereco (0x3C/0x3D).");
   }

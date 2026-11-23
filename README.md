@@ -25,12 +25,18 @@ bitcointracker/
 │   └── index.html           fonte da página (editar aqui)
 ├── wokwi/                   arquivos para simular o circuito no Wokwi
 ├── ferramentas/
-│   └── servidor-simulado.js imita as rotas do ESP32 para testar a página
+│   ├── servidor-simulado.js         imita as rotas do ESP32 para testar a página
+│   ├── gerar-diagrama-protoboard.js gera wokwi/diagram.json (montagem na protoboard)
+│   └── teste-montagem/              sketch que testa a fiação, sem Wi-Fi
+├── MONTAGEM.md              passo a passo da montagem na protoboard
 ├── .githooks/pre-commit     barra commit com pagina.h desatualizado
 └── gerar-pagina.ps1         converte web/index.html em pagina.h
 ```
 
 ## Montagem
+
+**O passo a passo na protoboard, furo por furo, está em [MONTAGEM.md](MONTAGEM.md).**
+Resumo das ligações:
 
 | Componente | Pino do componente | Liga em |
 |---|---|---|
@@ -38,17 +44,17 @@ bitcointracker/
 | | GND | GND |
 | | SDA | GPIO21 |
 | | SCL | GPIO22 |
-| Chave táctil | um terminal | GPIO4 |
-| | terminal do lado oposto | GND |
+| Chave táctil | um lado | GPIO4 |
+| | outro lado | GND |
 | LED | perna longa (+) | GPIO16, passando pelo resistor de 220 Ω |
 | | perna curta (−) | GND |
 
 - O botão não precisa de resistor: o código liga o pull-up interno.
-- Na chave táctil de 4 terminais, os pares do mesmo lado já vêm ligados entre si.
-  Use dois terminais em diagonal para não errar.
 - O código original usava o **GPIO15** para o LED. Ele é um pino de boot do ESP32,
   por isso foi trocado pelo 16. Para voltar ao 15, mude `PINO_LED` no `.ino`.
 - Se a tela ficar preta, troque `ENDERECO_OLED` de `0x3C` para `0x3D`.
+- Na protoboard o OLED fica de cabeça para baixo, e o firmware gira a imagem
+  (`GIRAR_TELA_180`). Se montarem de outro jeito, ajuste essa constante.
 
 ## Instalação (Arduino IDE 2)
 
@@ -75,7 +81,10 @@ bitcointracker/
 ## Testando sem a placa (Wokwi)
 
 O [Wokwi](https://wokwi.com) simula o ESP32 com o OLED, o botão e o LED no
-navegador. A pasta `wokwi/` tem a mesma fiação da tabela acima.
+navegador. O `wokwi/diagram.json` mostra o circuito montado na protoboard,
+igual ao [MONTAGEM.md](MONTAGEM.md). Ele é gerado por
+`node ferramentas/gerar-diagrama-protoboard.js`; para mudar algo de lugar,
+altere o script e rode de novo, em vez de editar o JSON à mão.
 
 1. Acesse <https://wokwi.com/projects/new/esp32>.
 2. Na aba `sketch.ino`, apague o conteúdo e cole o de `BitcoinTracker/BitcoinTracker.ino`.
