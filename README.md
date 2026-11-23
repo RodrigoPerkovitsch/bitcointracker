@@ -92,7 +92,14 @@ O que dá para testar:
   Clicar de novo logo em seguida mostra "Aguarde Xs".
 - O monitor serial, embaixo, mostra o preço e os erros.
 
+O `wokwi/segredos.h` também define o canal 6 da rede e tempos limite maiores
+para a consulta. Os dois são necessários no simulador: sem o canal o Wi-Fi não
+conecta a tempo, e o HTTPS simulado é bem mais lento que na placa real.
+
 Limites do simulador:
+- Se o Wi-Fi nunca conectar, troque de navegador. No Opera GX o bloqueador de
+  anúncios e a VPN cortam a conexão que o Wokwi usa para simular a rede; no
+  Edge e no Chrome funciona.
 - Todos os usuários do Wokwi saem para a internet pelo mesmo endereço. Por isso
   a CoinGecko pode responder **429 (limite)** com frequência. Isso não é defeito
   do código, e é até uma boa forma de ver a mensagem de erro no OLED.

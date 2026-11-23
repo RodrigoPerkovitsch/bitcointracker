@@ -9,6 +9,10 @@
 const char* WIFI_NOME  = "NOME_DA_REDE";
 const char* WIFI_SENHA = "SENHA_DA_REDE";
 
+// Opcional: canal da rede (1 a 13). Só é preciso em casos especiais, como o
+// simulador Wokwi. Numa rede normal, deixe comentado.
+// #define WIFI_CANAL 6
+
 // Opcional. Sem chave a CoinGecko funciona, mas com limite menor de consultas.
 // Chave "Demo" gratuita: https://www.coingecko.com/en/api
 const char* COINGECKO_CHAVE = "";

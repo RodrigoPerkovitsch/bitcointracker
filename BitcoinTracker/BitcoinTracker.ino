@@ -51,10 +51,17 @@ const unsigned long DEBOUNCE_MS          = 50;
 const unsigned long REDESENHO_MS         = 1000;          // para o "atualizado há Xs" andar
 
 // Durante a consulta o servidor web fica parado. Tempos curtos aqui reduzem o
-// período em que a página fica sem resposta.
-const int TEMPO_LIMITE_CONEXAO_MS = 4000;
-const int TEMPO_LIMITE_RESPOSTA_MS = 4000;
-const int TEMPO_LIMITE_TLS_S = 5;
+// período em que a página fica sem resposta. O segredos.h pode aumentar estes
+// valores: o Wokwi simula o HTTPS bem mais devagar que a placa real.
+#ifndef TEMPO_LIMITE_CONEXAO_MS
+#define TEMPO_LIMITE_CONEXAO_MS 4000
+#endif
+#ifndef TEMPO_LIMITE_RESPOSTA_MS
+#define TEMPO_LIMITE_RESPOSTA_MS 4000
+#endif
+#ifndef TEMPO_LIMITE_TLS_S
+#define TEMPO_LIMITE_TLS_S 5
+#endif
 
 // 1440 pontos = 24 h com um preço novo por minuto. Cada ponto ocupa 8 bytes,
 // então o histórico inteiro usa ~11 KB de RAM.
@@ -314,6 +321,9 @@ void buscarPreco() {
       erro = "Erro HTTP " + String(codigo);
     } else {
       erro = "Sem resposta da API";
+      // No OLED não cabe o detalhe; no serial ele diz se foi tempo esgotado,
+      // conexão recusada, falha no HTTPS etc.
+      Serial.printf("Detalhe da falha (%d): %s\n", codigo, HTTPClient::errorToString(codigo).c_str());
     }
     http.end();
   }
@@ -414,10 +424,20 @@ void aoConectarWifi() {
   jaTentou = false;  // consulta já, sem esperar o próximo ciclo de 60 s
 }
 
+// WIFI_CANAL é opcional no segredos.h. Informar o canal pula a varredura de
+// todos os canais; no Wokwi isso é necessário, senão a conexão demora demais.
+void iniciarConexaoWifi() {
+#ifdef WIFI_CANAL
+  WiFi.begin(WIFI_NOME, WIFI_SENHA, WIFI_CANAL);
+#else
+  WiFi.begin(WIFI_NOME, WIFI_SENHA);
+#endif
+}
+
 void conectarWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_NOME, WIFI_SENHA);
+  iniciarConexaoWifi();
   ultimaTentativaWifi = millis();
 
   Serial.print("Conectando ao Wi-Fi");
@@ -447,7 +467,7 @@ void verificarWifi() {
   } else if (!agora && millis() - ultimaTentativaWifi >= REPETIR_WIFI_MS) {
     ultimaTentativaWifi = millis();
     WiFi.disconnect();
-    WiFi.begin(WIFI_NOME, WIFI_SENHA);
+    iniciarConexaoWifi();
   }
 }
 
