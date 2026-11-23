@@ -3,12 +3,14 @@
 O ESP32 consulta o preço do bitcoin na CoinGecko a cada 60 s e mostra o resultado
 de duas formas:
 
-- **no display OLED**: preço, variação desde a leitura anterior, variação de 24 h
+- **no display OLED**: preço, variação desde o preço anterior, variação de 24 h
   e status (Wi-Fi, erro, "atualizado há Xs");
 - **numa página web** servida pelo próprio ESP32: preço, gráfico de histórico,
   máxima, mínima, variação no período e tabela com as últimas leituras.
 
-O botão força uma atualização. O LED fica aceso enquanto a busca acontece.
+O ESP32 guarda na memória as últimas 24 h de preços, então a página já abre com
+o gráfico preenchido. O botão força uma consulta. O LED fica aceso enquanto a
+consulta acontece.
 
 ## Estrutura
 
@@ -21,6 +23,10 @@ bitcointracker/
 │   └── segredos.exemplo.h   modelo do segredos.h
 ├── web/
 │   └── index.html           fonte da página (editar aqui)
+├── wokwi/                   arquivos para simular o circuito no Wokwi
+├── ferramentas/
+│   └── servidor-simulado.js imita as rotas do ESP32 para testar a página
+├── .githooks/pre-commit     barra commit com pagina.h desatualizado
 └── gerar-pagina.ps1         converte web/index.html em pagina.h
 ```
 
@@ -96,13 +102,31 @@ Limites do simulador:
 ## Alterando a página
 
 1. Edite `web/index.html`.
-2. Abra o arquivo direto no navegador (duplo clique). Sem o ESP32, a página
-   entra em **modo simulado**, com preços inventados, para ver o visual.
+2. Teste de um destes dois jeitos:
+   - **rápido:** abra o arquivo direto no navegador (duplo clique). A página
+     entra em **modo simulado**, com preços inventados gerados por ela mesma;
+   - **completo:** rode o servidor simulado (precisa do [Node.js](https://nodejs.org))
+     e abra <http://localhost:8765>. Ele imita as rotas `/dados` e `/historico`
+     do ESP32, então testa a página fazendo requisições de verdade:
+     ```powershell
+     node ferramentas/servidor-simulado.js
+     ```
+     Com ele rodando, dá para abrir no navegador
+     `http://localhost:8765/simular/reiniciar`, que imita a placa reiniciando,
+     e `http://localhost:8765/simular/lento`, que liga e desliga respostas lentas
+     (o ESP32 ocupado falando com a CoinGecko).
 3. Gere o `pagina.h` de novo:
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\gerar-pagina.ps1
    ```
 4. Compile e envie o firmware novamente.
+
+Para não esquecer o passo 3, ative uma vez o gancho de commit. Ele recusa o
+commit se o `pagina.h` estiver diferente do `index.html`:
+
+```powershell
+git config core.hooksPath .githooks
+```
 
 A página não usa biblioteca externa. O gráfico é desenhado em `<canvas>` para
 caber no ESP32 e funcionar mesmo sem internet no aparelho que a abre.
@@ -115,46 +139,60 @@ Devolve o último valor guardado, sem consultar a CoinGecko a cada acesso:
 
 ```json
 {
-  "sessao": 3141592653,
-  "leitura": 17,
   "valida": true,
   "intervaloSegundos": 60,
   "preco": 97432.18,
-  "variacao24h": -1.23,
-  "idadeSegundos": 12,
+  "atualizadoEm": 1795390800,
+  "idadeSegundos": 42,
   "precoAnterior": 97410.05,
+  "variacao24h": -1.23,
+  "idadeConsultaSegundos": 12,
   "erro": null
 }
 ```
 
-- `sessao` muda a cada reinício da placa e `leitura` cresce a cada preço novo.
-  A página usa o par para não registrar o mesmo ponto duas vezes.
-- `idadeSegundos` existe porque o ESP32 não tem relógio. A página calcula o
-  horário com o relógio do próprio aparelho.
-- `erro` traz o texto da última falha (ex.: `"Limite da API (429)"`). O preço
-  anterior continua sendo enviado, e a página o marca como desatualizado.
+- `atualizadoEm` é o horário Unix (em segundos) em que a **CoinGecko** atualizou
+  o preço. A CoinGecko gratuita só renova o preço mais ou menos a cada minuto.
+  Por isso o ESP32 só conta um preço como novo quando esse horário muda;
+  consultar e receber o mesmo valor não vira "sem alteração" na tela. A página
+  usa o mesmo campo para posicionar o ponto no gráfico e evitar pontos repetidos.
+- `idadeSegundos` é o tempo desde que este preço chegou ao ESP32.
+  `idadeConsultaSegundos` é o tempo desde a última consulta que deu certo, mesmo
+  quando o preço não mudou. A página usa esse segundo campo para decidir se o
+  valor está desatualizado.
+- `variacao24h` vem `null` se a CoinGecko não mandar o campo, para a tela mostrar
+  "—" em vez de um 0% falso.
+- `erro` traz o texto da última falha (ex.: `"Limite da API (429)"`). O último
+  preço continua sendo enviado, e a página o marca como desatualizado.
+- Se `valida` for `false` (placa recém-ligada, sem nenhum preço ainda), os campos
+  de preço não vêm, e a página mostra "—".
 
-## Histórico: opção A (atual) e opção B (proposta)
+### `GET /historico`
 
-**Hoje (opção A)** o histórico fica no navegador (`localStorage`). Ele começa
-quando a página é aberta e cada aparelho tem o seu.
-
-**Opção B (a combinar com quem cuida do firmware):** o ESP32 guardaria as
-últimas leituras em memória e as devolveria numa rota nova. **A página já está
-preparada:** se `/historico` existir, ela carrega esses pontos ao abrir. Formato
-esperado:
+Os preços guardados na memória do ESP32, do mais antigo para o mais novo:
 
 ```json
 {
-  "sessao": 3141592653,
   "pontos": [
-    { "leitura": 1, "preco": 97001.10, "idadeSegundos": 960 },
-    { "leitura": 2, "preco": 97020.55, "idadeSegundos": 900 }
+    { "atualizadoEm": 1795387200, "preco": 97001.10 },
+    { "atualizadoEm": 1795387260, "preco": 97020.55 }
   ]
 }
 ```
 
-`sessao` e `leitura` devem ser os mesmos de `/dados`.
+- São guardados até 1440 pontos, ou seja, 24 h com um preço novo por minuto.
+  Isso ocupa cerca de 11 KB de RAM. Quando enche, o mais antigo sai.
+- O histórico fica só na RAM: **se a placa reiniciar, ele começa do zero.**
+  Gravar na memória flash evitaria isso, mas desgasta a flash e complica o código.
+  Para uma demonstração não compensa.
+- A página também guarda no navegador o que já viu (`localStorage`). Abrir a
+  página de novo no mesmo aparelho junta as duas fontes, sem pontos repetidos.
+
+### Comportamento da página quando o ESP32 não responde
+
+Enquanto consulta a CoinGecko, o ESP32 fica até ~13 s sem atender a página.
+Por isso uma falha isolada não gera alerta: a página tenta de novo em 3 s e só
+mostra "Sem resposta do ESP32" depois de 3 falhas seguidas.
 
 ## Limites conhecidos
 
@@ -163,5 +201,7 @@ esperado:
 - Sem chave, a API gratuita da CoinGecko tem limite baixo de consultas. Por isso o
   intervalo é de 60 s e o botão espera 15 s entre buscas. Uma chave *Demo*
   gratuita pode ser colocada em `segredos.h`.
-- Enquanto busca o preço (1–2 s), o ESP32 não responde à página. A página tolera
-  isso e tenta de novo na consulta seguinte.
+- Enquanto busca o preço (normalmente 1–2 s, no pior caso ~13 s), o ESP32 não
+  responde à página. A página tolera isso; veja acima.
+- Com a tela do celular bloqueada, o navegador pausa a página. Isso não afeta o
+  gráfico, porque o histórico fica no ESP32.

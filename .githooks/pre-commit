@@ -1,0 +1,6 @@
+#!/bin/sh
+# Impede commit com pagina.h diferente de web/index.html: a placa receberia a
+# página antiga e ninguém perceberia.
+# Ativar uma vez por clone:  git config core.hooksPath .githooks
+raiz="$(git rev-parse --show-toplevel)"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$raiz/gerar-pagina.ps1" -Verificar

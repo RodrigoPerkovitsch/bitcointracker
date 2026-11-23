@@ -1,11 +1,15 @@
 /*
  * Bitcoin Tracker — ESP32 + OLED SSD1306 (0.96", I2C)
  *
- * - Busca preço e variação de 24 h na CoinGecko a cada 60 s
- * - Mostra no OLED: preço, variação desde a leitura anterior, variação 24 h e status
- * - Botão força uma atualização (respeitando um intervalo mínimo, por causa do limite da API)
- * - LED aceso enquanto a busca está em andamento
- * - Servidor web: "/" entrega a página com gráfico, "/dados" entrega o último valor em JSON
+ * - Consulta preço e variação de 24 h na CoinGecko a cada 60 s
+ * - Mostra no OLED: preço, variação desde o preço anterior, variação 24 h e status
+ * - Botão força uma consulta (respeitando um intervalo mínimo, por causa do limite da API)
+ * - LED aceso enquanto a consulta está em andamento
+ * - Guarda as últimas 24 h de preços na memória (opção B do histórico)
+ * - Servidor web:
+ *     "/"          página com gráfico
+ *     "/dados"     preço atual em JSON
+ *     "/historico" preços guardados em JSON
  *
  * A página (pagina.h) é gerada a partir de web/index.html — veja o README.
  */
@@ -39,18 +43,31 @@ const int ALTURA_TELA  = 64;
 const uint8_t ENDERECO_OLED = 0x3C;  // se a tela ficar preta, teste 0x3D
 
 // ---------------- Tempos ----------------
-const unsigned long INTERVALO_BUSCA_MS   = 60UL * 1000;  // busca automática
+const unsigned long INTERVALO_BUSCA_MS   = 60UL * 1000;  // consulta automática
 const unsigned long INTERVALO_MINIMO_MS  = 15UL * 1000;  // o botão não força antes disso (limite da API gratuita)
 const unsigned long TEMPO_LIMITE_WIFI_MS = 20UL * 1000;  // espera no boot antes de seguir sem rede
 const unsigned long REPETIR_WIFI_MS      = 30UL * 1000;  // nova tentativa de conexão se cair
 const unsigned long DEBOUNCE_MS          = 50;
 const unsigned long REDESENHO_MS         = 1000;          // para o "atualizado há Xs" andar
 
+// Durante a consulta o servidor web fica parado. Tempos curtos aqui reduzem o
+// período em que a página fica sem resposta.
+const int TEMPO_LIMITE_CONEXAO_MS = 4000;
+const int TEMPO_LIMITE_RESPOSTA_MS = 4000;
+const int TEMPO_LIMITE_TLS_S = 5;
+
+// 1440 pontos = 24 h com um preço novo por minuto. Cada ponto ocupa 8 bytes,
+// então o histórico inteiro usa ~11 KB de RAM.
+const int CAPACIDADE_HISTORICO = 1440;
+
 const char* NOME_MDNS = "bitcointracker";  // http://bitcointracker.local
 
+// include_last_updated_at: a CoinGecko gratuita só renova o preço mais ou menos
+// a cada minuto. Pelo horário da atualização dá para saber se o preço é novo
+// ou se é o mesmo da consulta anterior.
 const char* URL_COINGECKO =
   "https://api.coingecko.com/api/v3/simple/price"
-  "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true";
+  "?ids=bitcoin&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true";
 
 Adafruit_SSD1306 tela(LARGURA_TELA, ALTURA_TELA, &Wire, -1);
 WebServer servidor(80);
@@ -63,26 +80,50 @@ struct Leitura {
   double precoAnterior = 0;
   bool temAnterior = false;
   double variacao24h = 0;
-  unsigned long momento = 0;  // millis() da última leitura válida
-  uint32_t numero = 0;        // cresce a cada leitura válida; a página usa para não duplicar pontos
+  bool temVariacao24h = false;
+  uint32_t atualizadoEm = 0;  // horário Unix (s) em que a CoinGecko atualizou o preço
+  unsigned long momento = 0;  // millis() em que este preço chegou ao ESP32
 };
 
 Leitura leitura;
-String ultimoErro = "";                 // vazio = a última busca deu certo
+String ultimoErro = "";                 // vazio = a última consulta deu certo
 unsigned long momentoUltimaTentativa = 0;
+unsigned long momentoUltimaConsultaOk = 0;
 bool jaTentou = false;
+bool teveConsultaOk = false;
 bool buscando = false;
 
-// Muda a cada boot. Sem isso, depois de um reinício a leitura nº 1 seria
-// confundida pela página com a leitura nº 1 da sessão anterior.
-uint32_t idSessao = 0;
+// Preço em centavos (uint32) em vez de float: float perde os centavos a partir de ~US$ 100 mil.
+struct Ponto {
+  uint32_t atualizadoEm;
+  uint32_t centavos;
+};
+Ponto historico[CAPACIDADE_HISTORICO];
+int inicioHistorico = 0;
+int totalHistorico = 0;
 
+// Guardar início + duração (e não "até quando") mantém a conta certa mesmo
+// quando o millis() dá a volta, depois de ~49 dias ligado.
 String avisoTemporario = "";
-unsigned long avisoAte = 0;
+unsigned long avisoInicio = 0;
+unsigned long avisoDuracao = 0;
 
 bool wifiConectado = false;
+bool mdnsIniciado = false;
 unsigned long ultimaTentativaWifi = 0;
 unsigned long ultimoRedesenho = 0;
+
+// ---------------- Histórico ----------------
+void guardarNoHistorico(uint32_t atualizadoEm, double preco) {
+  int posicao = (inicioHistorico + totalHistorico) % CAPACIDADE_HISTORICO;
+  historico[posicao] = { atualizadoEm, (uint32_t)llround(preco * 100.0) };
+  if (totalHistorico < CAPACIDADE_HISTORICO) {
+    totalHistorico++;
+  } else {
+    // cheio: o novo ponto ocupou o lugar do mais antigo
+    inicioHistorico = (inicioHistorico + 1) % CAPACIDADE_HISTORICO;
+  }
+}
 
 // ---------------- Formatação ----------------
 String formatarMilhar(double valor) {
@@ -115,11 +156,15 @@ void desenharSeta(int x, int y, double delta) {
   else                tela.fillRect(x, y + 2, 7, 3, SSD1306_WHITE);
 }
 
+bool avisoAtivo() {
+  return avisoDuracao > 0 && millis() - avisoInicio < avisoDuracao;
+}
+
 String textoRodape() {
   if (buscando) return "Buscando...";
-  if (millis() < avisoAte) return avisoTemporario;
+  if (avisoAtivo()) return avisoTemporario;
   if (ultimoErro.length() > 0) return "! " + ultimoErro;
-  if (leitura.valida) return "Atualizado ha " + formatarIdade((millis() - leitura.momento) / 1000);
+  if (teveConsultaOk) return "Atualizado ha " + formatarIdade((millis() - momentoUltimaConsultaOk) / 1000);
   return "Aguardando...";
 }
 
@@ -162,8 +207,12 @@ void desenharTela() {
 
     tela.setCursor(0, 46);
     tela.print("24h ");
-    tela.print(formatarComSinal(leitura.variacao24h, 2));
-    tela.print("%");
+    if (leitura.temVariacao24h) {
+      tela.print(formatarComSinal(leitura.variacao24h, 2));
+      tela.print("%");
+    } else {
+      tela.print("--");
+    }
   }
 
   tela.setCursor(0, 56);
@@ -185,11 +234,27 @@ void mostrarMensagem(const char* linha1, const String& linha2) {
 
 void mostrarAviso(const String& texto, unsigned long duracaoMs) {
   avisoTemporario = texto;
-  avisoAte = millis() + duracaoMs;
+  avisoInicio = millis();
+  avisoDuracao = duracaoMs;
   desenharTela();
 }
 
 // ---------------- CoinGecko ----------------
+void registrarPreco(double preco, uint32_t atualizadoEm, JsonVariantConst variacao24h) {
+  if (leitura.valida) {
+    leitura.precoAnterior = leitura.preco;
+    leitura.temAnterior = true;
+  }
+  leitura.preco = preco;
+  leitura.atualizadoEm = atualizadoEm;
+  leitura.momento = millis();
+  // Sem o campo, mostrar "--" em vez de um 0% que pareceria um valor real.
+  leitura.temVariacao24h = variacao24h.is<double>();
+  leitura.variacao24h = variacao24h | 0.0;
+  leitura.valida = true;
+  guardarNoHistorico(atualizadoEm, preco);
+}
+
 void buscarPreco() {
   jaTentou = true;
   momentoUltimaTentativa = millis();
@@ -207,10 +272,13 @@ void buscarPreco() {
   // Sem validar o certificado: aceitável num protótipo. Em produção o certo
   // é fixar o certificado raiz com cliente.setCACert(...).
   cliente.setInsecure();
+  cliente.setHandshakeTimeout(TEMPO_LIMITE_TLS_S);
 
   HTTPClient http;
-  http.setTimeout(8000);
+  http.setConnectTimeout(TEMPO_LIMITE_CONEXAO_MS);
+  http.setTimeout(TEMPO_LIMITE_RESPOSTA_MS);
   String erro = "";
+  bool precoNovo = false;
 
   if (!http.begin(cliente, URL_COINGECKO)) {
     erro = "Falha ao conectar";
@@ -220,23 +288,25 @@ void buscarPreco() {
     }
     int codigo = http.GET();
 
-    // Só 200 conta como sucesso. Antes, "codigo > 0" aceitava 429/404 e a tela
-    // continuava mostrando o preço antigo como se fosse atual.
+    // Só 200 conta como sucesso: 429/404 também são "> 0" e deixariam o preço
+    // antigo na tela como se fosse atual.
     if (codigo == HTTP_CODE_OK) {
       JsonDocument doc;
       DeserializationError falha = deserializeJson(doc, http.getString());
-      if (falha || !doc["bitcoin"]["usd"].is<double>()) {
+      JsonVariantConst btc = doc["bitcoin"];
+      if (falha || !btc["usd"].is<double>() || !btc["last_updated_at"].is<uint32_t>()) {
         erro = "Resposta invalida";
       } else {
-        if (leitura.valida) {
-          leitura.precoAnterior = leitura.preco;
-          leitura.temAnterior = true;
+        teveConsultaOk = true;
+        momentoUltimaConsultaOk = millis();
+        uint32_t atualizadoEm = btc["last_updated_at"];
+        // Mesmo horário de atualização = mesmo preço da consulta anterior.
+        // Não conta como leitura nova, senão a tela mostraria "sem alteração"
+        // e o gráfico ficaria em degraus.
+        if (!leitura.valida || atualizadoEm != leitura.atualizadoEm) {
+          registrarPreco(btc["usd"].as<double>(), atualizadoEm, btc["usd_24h_change"]);
+          precoNovo = true;
         }
-        leitura.preco = doc["bitcoin"]["usd"].as<double>();
-        leitura.variacao24h = doc["bitcoin"]["usd_24h_change"] | 0.0;
-        leitura.momento = millis();
-        leitura.numero++;
-        leitura.valida = true;
       }
     } else if (codigo == 429) {
       erro = "Limite da API (429)";
@@ -253,42 +323,81 @@ void buscarPreco() {
   digitalWrite(PINO_LED, LOW);
 
   if (erro.length() > 0) {
-    Serial.println("Erro na busca: " + erro);
+    Serial.println("Erro na consulta: " + erro);
+  } else if (precoNovo) {
+    Serial.printf("Preco novo: %.2f USD | 24h: %+.2f%% | %d pontos no historico\n",
+                  leitura.preco, leitura.variacao24h, totalHistorico);
   } else {
-    Serial.printf("Preco: %.2f USD | 24h: %+.2f%%\n", leitura.preco, leitura.variacao24h);
+    Serial.println("Consulta ok, preco ainda nao mudou na CoinGecko.");
   }
   desenharTela();
 }
 
 // ---------------- Servidor web ----------------
+void cabecalhosJson() {
+  servidor.sendHeader("Cache-Control", "no-store");
+  // Permite abrir a página a partir do PC (fora da ESP32) durante o desenvolvimento.
+  servidor.sendHeader("Access-Control-Allow-Origin", "*");
+}
+
 void rotaPagina() {
   servidor.send_P(200, "text/html; charset=utf-8", PAGINA_HTML);
 }
 
 void rotaDados() {
-  // A rota só devolve o que já está guardado. Antes ela chamava a CoinGecko a
-  // cada acesso: com várias abas abertas a API bloqueava e o servidor travava.
+  // A rota só devolve o que já está guardado. Chamar a CoinGecko aqui, a cada
+  // acesso, estourava o limite da API com várias abas abertas.
   JsonDocument doc;
-  doc["sessao"] = idSessao;
-  doc["leitura"] = leitura.numero;
   doc["valida"] = leitura.valida;
   doc["intervaloSegundos"] = INTERVALO_BUSCA_MS / 1000;
   if (leitura.valida) {
     doc["preco"] = leitura.preco;
-    doc["variacao24h"] = leitura.variacao24h;
+    doc["atualizadoEm"] = leitura.atualizadoEm;
     doc["idadeSegundos"] = (millis() - leitura.momento) / 1000;
     if (leitura.temAnterior) doc["precoAnterior"] = leitura.precoAnterior;
     else doc["precoAnterior"] = nullptr;
+    if (leitura.temVariacao24h) doc["variacao24h"] = leitura.variacao24h;
+    else doc["variacao24h"] = nullptr;
   }
+  if (teveConsultaOk) doc["idadeConsultaSegundos"] = (millis() - momentoUltimaConsultaOk) / 1000;
+  else doc["idadeConsultaSegundos"] = nullptr;
   if (ultimoErro.length() > 0) doc["erro"] = ultimoErro;
   else doc["erro"] = nullptr;
 
   String corpo;
   serializeJson(doc, corpo);
-  servidor.sendHeader("Cache-Control", "no-store");
-  // Permite abrir a página a partir do PC (fora da ESP32) durante o desenvolvimento.
-  servidor.sendHeader("Access-Control-Allow-Origin", "*");
+  cabecalhosJson();
   servidor.send(200, "application/json", corpo);
+}
+
+void rotaHistorico() {
+  // Com o histórico cheio o JSON passa de 60 KB. Montar tudo numa String só
+  // poderia faltar memória contínua, então a resposta vai em pedaços.
+  cabecalhosJson();
+  servidor.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  servidor.send(200, "application/json", "");
+
+  String bloco = "{\"pontos\":[";
+  for (int i = 0; i < totalHistorico; i++) {
+    const Ponto& p = historico[(inicioHistorico + i) % CAPACIDADE_HISTORICO];
+    if (i > 0) bloco += ',';
+    bloco += "{\"atualizadoEm\":";
+    bloco += String(p.atualizadoEm);
+    bloco += ",\"preco\":";
+    bloco += String(p.centavos / 100);
+    bloco += '.';
+    uint32_t c = p.centavos % 100;
+    if (c < 10) bloco += '0';
+    bloco += String(c);
+    bloco += '}';
+    if (bloco.length() > 1024) {
+      servidor.sendContent(bloco);
+      bloco = "";
+    }
+  }
+  bloco += "]}";
+  servidor.sendContent(bloco);
+  servidor.sendContent("");  // encerra a resposta em pedaços
 }
 
 // ---------------- Wi-Fi ----------------
@@ -297,9 +406,12 @@ void aoConectarWifi() {
   String ip = WiFi.localIP().toString();
   Serial.println("\nWi-Fi conectado. Abra no navegador: http://" + ip);
   Serial.printf("Ou tente: http://%s.local\n", NOME_MDNS);
-  if (MDNS.begin(NOME_MDNS)) MDNS.addService("http", "tcp", 80);
+  if (!mdnsIniciado && MDNS.begin(NOME_MDNS)) {
+    MDNS.addService("http", "tcp", 80);
+    mdnsIniciado = true;
+  }
   mostrarAviso("IP " + ip, 15000);
-  jaTentou = false;  // busca já, sem esperar o próximo ciclo de 60 s
+  jaTentou = false;  // consulta já, sem esperar o próximo ciclo de 60 s
 }
 
 void conectarWifi() {
@@ -364,7 +476,6 @@ void setup() {
   pinMode(PINO_BOTAO, INPUT_PULLUP);
   pinMode(PINO_LED, OUTPUT);
   digitalWrite(PINO_LED, LOW);
-  idSessao = esp_random();
 
   // Se o OLED falhar o programa segue: a página web continua útil e o erro
   // aparece no monitor serial. O código original travava aqui.
@@ -378,6 +489,7 @@ void setup() {
 
   servidor.on("/", rotaPagina);
   servidor.on("/dados", rotaDados);
+  servidor.on("/historico", rotaHistorico);
   servidor.onNotFound([]() { servidor.send(404, "text/plain", "Nao encontrado"); });
   servidor.begin();
 

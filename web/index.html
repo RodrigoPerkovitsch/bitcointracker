@@ -169,10 +169,15 @@
   // falsos. Serve para mostrar a tela sem a placa ligada.
   const SIMULADO = location.protocol === 'file:' || new URLSearchParams(location.search).has('simulado');
   const INTERVALO_CONSULTA_MS = SIMULADO ? 3000 : 10000;
-  const TEMPO_LIMITE_MS = 5000;
-  const LIMITE_PONTOS = 2000;          // ~33 h com uma leitura por minuto
+  const TEMPO_LIMITE_MS = 6000;
+  // Enquanto consulta a CoinGecko o ESP32 fica até ~13 s sem responder (pior
+  // caso dos tempos limite do firmware). Depois de uma falha a página tenta de
+  // novo logo, e só avisa na terceira seguida (~24 s), para não acusar à toa.
+  const FALHAS_PARA_ALERTA = 3;
+  const INTERVALO_APOS_FALHA_MS = 3000;
+  const LIMITE_PONTOS = 2000;          // ~33 h com um preço novo por minuto
   const LACUNA_MS = 10 * 60 * 1000;    // acima disso a linha do gráfico é interrompida
-  const CHAVE = SIMULADO ? null : 'btc-tracker-historico-v1';
+  const CHAVE = SIMULADO ? null : 'btc-tracker-historico-v2';
 
   const fmtPreco = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' });
   const fmtEixo0 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
@@ -184,11 +189,11 @@
   const $ = (id) => document.getElementById(id);
 
   // ---------- Estado ----------
-  let historico = carregarHistorico();  // [{ t: ms, p: preço, k: "sessao-leitura" }] em ordem de tempo
+  let historico = carregarHistorico();  // [{ t: ms, p: preço }] em ordem de tempo
   let ultimo = null;                    // última resposta de /dados
-  let momentoLeitura = null;            // quando o ESP32 obteve o preço, no relógio do navegador
+  let momentoConsulta = null;           // última consulta bem-sucedida do ESP32, no relógio do navegador
   let ultimoContato = null;
-  let falhou = false;
+  let falhasSeguidas = 0;
   let periodoMin = 60;
   let origem = SIMULADO ? 'simulado' : 'navegador';
   let hover = null;
@@ -199,7 +204,7 @@
     if (!CHAVE) return [];
     try {
       const v = JSON.parse(localStorage.getItem(CHAVE));
-      return Array.isArray(v) ? v.filter((x) => x && isFinite(x.t) && isFinite(x.p) && x.k) : [];
+      return Array.isArray(v) ? v.filter((x) => x && isFinite(x.t) && isFinite(x.p)) : [];
     } catch (e) { return []; }
   }
 
@@ -208,13 +213,18 @@
     try { localStorage.setItem(CHAVE, JSON.stringify(historico)); } catch (e) { /* navegador sem armazenamento: segue só em memória */ }
   }
 
-  // A chave sessao-leitura evita duplicar: a página consulta a cada 10 s, mas o
-  // ESP32 só tem preço novo a cada 60 s.
+  // O horário de atualização da CoinGecko identifica cada preço: a página
+  // pergunta a cada 10 s, mas o preço só muda mais ou menos a cada minuto. O
+  // mesmo horário vindo de /dados e de /historico vira um ponto só.
+  function pontoDe(atualizadoEm, preco) {
+    return { t: atualizadoEm * 1000, p: preco };
+  }
+
   function adicionarPontos(novos) {
-    const chaves = new Set(historico.map((x) => x.k));
+    const existentes = new Set(historico.map((x) => x.t));
     let mudou = false;
     for (const n of novos) {
-      if (!chaves.has(n.k)) { historico.push(n); chaves.add(n.k); mudou = true; }
+      if (!existentes.has(n.t)) { historico.push(n); existentes.add(n.t); mudou = true; }
     }
     if (!mudou) return;
     historico.sort((a, b) => a.t - b.t);
@@ -241,19 +251,18 @@
     }
   }
 
-  // Preparado para a opção B: se o ESP32 tiver a rota /historico, a página já
-  // abre com o gráfico preenchido. Sem a rota (opção A), o 404 é ignorado.
+  // O ESP32 guarda as últimas 24 h; a página abre com o gráfico já preenchido.
+  // Se a rota falhar (placa antiga, rede ruim), segue com o histórico do navegador.
   async function carregarHistoricoDoEsp32() {
     if (SIMULADO) return;
     try {
       const d = await buscarJson('/historico');
       if (!d || !Array.isArray(d.pontos)) return;
-      const agora = Date.now();
       adicionarPontos(d.pontos
-        .filter((x) => isFinite(x.preco) && isFinite(x.idadeSegundos))
-        .map((x) => ({ t: agora - x.idadeSegundos * 1000, p: x.preco, k: d.sessao + '-' + x.leitura })));
+        .filter((x) => isFinite(x.preco) && isFinite(x.atualizadoEm))
+        .map((x) => pontoDe(x.atualizadoEm, x.preco)));
       origem = 'esp32';
-    } catch (e) { /* rota ainda não existe */ }
+    } catch (e) { /* segue só com o histórico do navegador */ }
   }
 
   async function consultar() {
@@ -261,16 +270,14 @@
       const d = SIMULADO ? simulador.proximo() : await buscarJson('/dados');
       ultimo = d;
       ultimoContato = Date.now();
-      falhou = false;
-      if (d.valida) {
-        momentoLeitura = Date.now() - (d.idadeSegundos || 0) * 1000;
-        adicionarPontos([{ t: momentoLeitura, p: d.preco, k: d.sessao + '-' + d.leitura }]);
-      }
+      falhasSeguidas = 0;
+      momentoConsulta = d.idadeConsultaSegundos == null ? null : Date.now() - d.idadeConsultaSegundos * 1000;
+      if (d.valida) adicionarPontos([pontoDe(d.atualizadoEm, d.preco)]);
     } catch (e) {
-      falhou = true;
+      falhasSeguidas++;
     }
     renderizarTudo();
-    setTimeout(consultar, INTERVALO_CONSULTA_MS);
+    setTimeout(consultar, falhasSeguidas > 0 ? INTERVALO_APOS_FALHA_MS : INTERVALO_CONSULTA_MS);
   }
 
   // ---------- Formatação ----------
@@ -300,12 +307,14 @@
   }
 
   // ---------- Renderização ----------
+  function semResposta() { return falhasSeguidas >= FALHAS_PARA_ALERTA; }
+
   function renderizarStatus() {
     let estado, texto;
     if (SIMULADO) { estado = 'aviso'; texto = 'Modo simulado (sem ESP32)'; }
-    else if (falhou && !ultimoContato) { estado = 'falha'; texto = 'ESP32 não respondeu'; }
+    else if (semResposta() && !ultimoContato) { estado = 'falha'; texto = 'ESP32 não respondeu'; }
     else if (!ultimoContato) { estado = 'espera'; texto = 'Conectando ao ESP32…'; }
-    else if (falhou) { estado = 'falha'; texto = 'Sem resposta do ESP32 há ' + tempoRelativo(Date.now() - ultimoContato); }
+    else if (semResposta()) { estado = 'falha'; texto = 'Sem resposta do ESP32 há ' + tempoRelativo(Date.now() - ultimoContato); }
     else if (ultimo && ultimo.erro) { estado = 'aviso'; texto = 'ESP32: ' + ultimo.erro; }
     else { estado = 'ok'; texto = 'Conectado ao ESP32'; }
     $('status').dataset.estado = estado;
@@ -313,21 +322,30 @@
   }
 
   function renderizarDestaque() {
-    if (!ultimo || !ultimo.valida) {
-      if (ultimo && ultimo.erro) $('idade').textContent = 'O ESP32 ainda não obteve o preço: ' + ultimo.erro;
+    if (!ultimo) return;
+    if (!ultimo.valida) {
+      // Placa reiniciada ou sem nenhum preço ainda: não deixa na tela o preço
+      // de antes como se fosse atual.
+      $('preco').textContent = '—';
+      $('preco').classList.remove('velho');
+      escrever($('var-anterior'), '—', 'neutra');
+      escrever($('var-24h'), '—', 'neutra');
+      $('idade').textContent = ultimo.erro
+        ? 'O ESP32 ainda não obteve o preço: ' + ultimo.erro
+        : 'O ESP32 ainda não obteve o primeiro preço';
       return;
     }
     $('preco').textContent = fmtPreco.format(ultimo.preco);
 
     const intervalo = (ultimo.intervaloSegundos || 60) * 1000;
-    const idade = Date.now() - momentoLeitura;
-    const velho = falhou || idade > intervalo * 2.5;
+    const idadeConsulta = momentoConsulta == null ? Infinity : Date.now() - momentoConsulta;
+    const velho = semResposta() || idadeConsulta > intervalo * 2.5;
     $('preco').classList.toggle('velho', velho);
 
-    let texto = 'Lido pelo ESP32 há ' + tempoRelativo(idade);
+    let texto = 'Preço de ' + fmtHoraSeg.format(ultimo.atualizadoEm * 1000);
     if (velho) texto += ' · valor desatualizado';
-    else if (idade < intervalo) texto += ' · próxima em ~' + tempoRelativo(intervalo - idade);
-    else texto += ' · atualizando…';
+    else if (idadeConsulta < intervalo) texto += ' · próxima consulta em ~' + tempoRelativo(intervalo - idadeConsulta);
+    else texto += ' · consultando…';
     $('idade').textContent = texto;
 
     if (ultimo.precoAnterior == null) {
@@ -338,7 +356,8 @@
     }
 
     const v24 = ultimo.variacao24h;
-    escrever($('var-24h'), seta(v24) + ' ' + sinal(v24) + fmtPct.format(Math.abs(v24)) + '%', direcao(v24));
+    if (v24 == null) escrever($('var-24h'), '—', 'neutra');
+    else escrever($('var-24h'), seta(v24) + ' ' + sinal(v24) + fmtPct.format(Math.abs(v24)) + '%', direcao(v24));
   }
 
   function renderizarIndicadores() {
@@ -610,28 +629,27 @@
 
   // ---------- Simulador ----------
   function criarSimulador() {
-    const sessao = 1;
-    let leitura = 0;
     let preco = 96000 + Math.random() * 4000;
     let anterior = null;
     const referencia24h = preco * (1 + (Math.random() - 0.5) * 0.04);
     const passo = () => {
       anterior = preco;
       preco = Math.max(1000, preco + (Math.random() + Math.random() + Math.random() - 1.5) * 60);
-      leitura++;
     };
     return {
       semear() {
-        const agora = Date.now(), pts = [];
-        for (let i = 180; i >= 1; i--) { passo(); pts.push({ t: agora - i * 60000, p: preco, k: sessao + '-' + leitura }); }
+        const agora = Math.floor(Date.now() / 1000), pts = [];
+        for (let i = 180; i >= 1; i--) { passo(); pts.push(pontoDe(agora - i * 60, preco)); }
         adicionarPontos(pts);
       },
       proximo() {
         passo();
         return {
-          sessao, leitura, valida: true, preco, precoAnterior: anterior,
+          valida: true, preco, precoAnterior: anterior,
+          atualizadoEm: Math.floor(Date.now() / 1000),
           variacao24h: (preco / referencia24h - 1) * 100,
-          idadeSegundos: 0, erro: null, intervaloSegundos: INTERVALO_CONSULTA_MS / 1000,
+          idadeSegundos: 0, idadeConsultaSegundos: 0, erro: null,
+          intervaloSegundos: INTERVALO_CONSULTA_MS / 1000,
         };
       },
     };
