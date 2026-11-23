@@ -1,0 +1,4 @@
+# Bibliotecas que o Wokwi instala ao compilar
+Adafruit SSD1306
+Adafruit GFX Library
+ArduinoJson

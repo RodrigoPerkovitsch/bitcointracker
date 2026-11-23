@@ -66,6 +66,33 @@ bitcointracker/
 - `http://bitcointracker.local` também costuma funcionar no Windows, macOS e
   iPhone; no Android, nem sempre. O IP sempre funciona.
 
+## Testando sem a placa (Wokwi)
+
+O [Wokwi](https://wokwi.com) simula o ESP32 com o OLED, o botão e o LED no
+navegador. A pasta `wokwi/` tem a mesma fiação da tabela acima.
+
+1. Acesse <https://wokwi.com/projects/new/esp32>.
+2. Na aba `sketch.ino`, apague o conteúdo e cole o de `BitcoinTracker/BitcoinTracker.ino`.
+3. Na aba `diagram.json`, apague o conteúdo e cole o de `wokwi/diagram.json`.
+4. Pela setinha ao lado das abas, escolha *New file…* e crie três arquivos:
+   - `pagina.h`, com o conteúdo de `BitcoinTracker/pagina.h`;
+   - `segredos.h`, com o conteúdo de `wokwi/segredos.h` (rede `Wokwi-GUEST`, sem senha);
+   - `libraries.txt`, com o conteúdo de `wokwi/libraries.txt`.
+5. Clique em ▶. A primeira compilação demora um pouco.
+
+O que dá para testar:
+- O OLED mostra "Conectando Wi-Fi...", depois o IP e em seguida o preço real.
+- Clicar no botão força uma nova busca, e o LED acende enquanto ela acontece.
+  Clicar de novo logo em seguida mostra "Aguarde Xs".
+- O monitor serial, embaixo, mostra o preço e os erros.
+
+Limites do simulador:
+- Todos os usuários do Wokwi saem para a internet pelo mesmo endereço. Por isso
+  a CoinGecko pode responder **429 (limite)** com frequência. Isso não é defeito
+  do código, e é até uma boa forma de ver a mensagem de erro no OLED.
+- Na versão gratuita do site não dá para abrir a página web do ESP32 simulado.
+  Para ver a página, abra `web/index.html` direto no navegador (modo simulado).
+
 ## Alterando a página
 
 1. Edite `web/index.html`.
