@@ -89,11 +89,22 @@ altere o script e rode de novo, em vez de editar o JSON à mão.
 1. Acesse <https://wokwi.com/projects/new/esp32>.
 2. Na aba `sketch.ino`, apague o conteúdo e cole o de `BitcoinTracker/BitcoinTracker.ino`.
 3. Na aba `diagram.json`, apague o conteúdo e cole o de `wokwi/diagram.json`.
-4. Pela setinha ao lado das abas, escolha *New file…* e crie três arquivos:
+4. Pela setinha ao lado das abas, escolha *New file…* e crie dois arquivos:
    - `pagina.h`, com o conteúdo de `BitcoinTracker/pagina.h`;
-   - `segredos.h`, com o conteúdo de `wokwi/segredos.h` (rede `Wokwi-GUEST`, sem senha);
-   - `libraries.txt`, com o conteúdo de `wokwi/libraries.txt`.
-5. Clique em ▶. A primeira compilação demora um pouco.
+   - `segredos.h`, com o conteúdo de `wokwi/segredos.h` (rede `Wokwi-GUEST`, sem senha).
+
+   Confira o nome antes de apertar Enter: o campo às vezes vem preenchido com o
+   nome do arquivo anterior.
+5. Na aba **Library Manager**, clique em **+** e adicione as três bibliotecas
+   (escolha exatamente estes nomes; há outras parecidas na lista):
+   - **Adafruit SSD1306**
+   - **Adafruit GFX Library**
+   - **ArduinoJson**
+
+   Não crie o `libraries.txt` à mão. O Library Manager gera esse arquivo
+   sozinho, e um `libraries.txt` copiado fez o display ficar preto num dos
+   testes. O `wokwi/libraries.txt` do repositório fica só como referência.
+6. Clique em ▶. A primeira compilação demora um pouco.
 
 O que dá para testar:
 - O OLED mostra "Conectando Wi-Fi...", depois o IP e em seguida o preço real.
