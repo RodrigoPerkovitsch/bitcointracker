@@ -61,9 +61,14 @@ function json(res, corpo) {
 http.createServer((req, res) => {
   const url = req.url.split('?')[0];
 
-  if (url === '/') {
+  if (url === '/' || url === '/web/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(fs.readFileSync(PAGINA));
+  }
+
+  if (url === '/ABRIR-AQUI.html') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(fs.readFileSync(path.join(__dirname, '..', 'ABRIR-AQUI.html')));
   }
 
   if (url === '/dados') {

@@ -42,11 +42,10 @@ const int LARGURA_TELA = 128;
 const int ALTURA_TELA  = 64;
 const uint8_t ENDERECO_OLED = 0x3C;  // se a tela ficar preta, teste 0x3D
 
-// Na montagem da protoboard (veja MONTAGEM.md) o OLED fica com os pinos na
-// fileira de cima e a tela para fora da borda, ou seja, de cabeça para baixo.
-// true gira a imagem 180° para o texto ficar legível. Se montarem o OLED na
-// posição normal (pinos em cima da tela), troque para false.
-const bool GIRAR_TELA_180 = true;
+// Na montagem real o OLED ficou na posição normal, então a imagem não precisa
+// girar. Use true só se o OLED ficar de cabeça para baixo — por exemplo no
+// desenho do Wokwi (wokwi/diagram.json), onde a tela fica para fora da borda.
+const bool GIRAR_TELA_180 = false;
 
 // ---------------- Tempos ----------------
 const unsigned long INTERVALO_BUSCA_MS   = 60UL * 1000;  // consulta automática

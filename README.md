@@ -12,6 +12,8 @@ O ESP32 guarda na memória as últimas 24 h de preços, então a página já abr
 o gráfico preenchido. O botão força uma consulta. O LED fica aceso enquanto a
 consulta acontece.
 
+**Vai apresentar?** Siga o [CONEXAO.md](CONEXAO.md) e abra o `ABRIR-AQUI.html`.
+
 ## Estrutura
 
 ```
@@ -29,6 +31,8 @@ bitcointracker/
 │   ├── gerar-diagrama-protoboard.js gera wokwi/diagram.json (montagem na protoboard)
 │   └── teste-montagem/              sketch que testa a fiação, sem Wi-Fi
 ├── MONTAGEM.md              passo a passo da montagem na protoboard
+├── CONEXAO.md               como abrir o site do ESP32 na apresentação (e o plano B)
+├── ABRIR-AQUI.html          página de entrada: site do ESP32 ou site simulado
 ├── .githooks/pre-commit     barra commit com pagina.h desatualizado
 └── gerar-pagina.ps1         converte web/index.html em pagina.h
 ```
@@ -53,8 +57,9 @@ Resumo das ligações:
 - O código original usava o **GPIO15** para o LED. Ele é um pino de boot do ESP32,
   por isso foi trocado pelo 16. Para voltar ao 15, mude `PINO_LED` no `.ino`.
 - Se a tela ficar preta, troque `ENDERECO_OLED` de `0x3C` para `0x3D`.
-- Na protoboard o OLED fica de cabeça para baixo, e o firmware gira a imagem
-  (`GIRAR_TELA_180`). Se montarem de outro jeito, ajuste essa constante.
+- Na montagem real o OLED ficou na posição normal, então `GIRAR_TELA_180` está
+  `false`. No desenho do Wokwi o OLED fica de cabeça para baixo; para simular lá,
+  troque para `true`.
 
 ## Instalação (Arduino IDE 2)
 

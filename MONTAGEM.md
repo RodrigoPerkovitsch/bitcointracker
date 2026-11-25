@@ -61,9 +61,10 @@ Leia o que está impresso no **seu** módulo, ao lado dos pinos:
   fios 7 e 8** do passo 3 (o 7 vai para o trilho − e o 8 para o trilho +).
   **Ligar VCC no GND queima o display.**
 
-Com a tela virada para fora, ela fica de cabeça para baixo. O firmware já
-compensa isso (`GIRAR_TELA_180` no `BitcoinTracker.ino`). Se montarem o OLED
-de outro jeito e o texto aparecer invertido, mude esse valor para `false`.
+Se o texto do display aparecer de cabeça para baixo, ajuste `GIRAR_TELA_180`
+no `BitcoinTracker.ino`. Na montagem real o OLED ficou na posição normal e o
+valor está `false`. Com o OLED virado para fora da borda, como no desenho do
+Wokwi, use `true`.
 
 ### Cuidado com o botão: descubra quais pernas são ligadas
 
@@ -139,4 +140,4 @@ Se as três passarem, grave o `BitcoinTracker.ino` (veja o README).
 | OLED não responde | SDA e SCL trocados (fios 1 e 2), ou VCC/GND do OLED invertidos |
 | LED nunca acende | LED ao contrário (perna longa na coluna 13) ou resistor fora das colunas 7 e 13 |
 | Botão "apertado" o tempo todo | par de pernas do botão na posição errada (veja o teste com multímetro) |
-| Texto do OLED de cabeça para baixo | troque `GIRAR_TELA_180` no `BitcoinTracker.ino` |
+| Texto do OLED de cabeça para baixo | troque `GIRAR_TELA_180` no `BitcoinTracker.ino` (`true` ↔ `false`) |
