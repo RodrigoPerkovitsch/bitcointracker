@@ -32,7 +32,7 @@ bitcointracker/
 │   ├── gerar-diagrama-protoboard.js gera wokwi/diagram.json (montagem na protoboard)
 │   └── teste-montagem/              sketch que testa a fiação, sem Wi-Fi
 ├── MONTAGEM.md              passo a passo da montagem na protoboard
-├── CONEXAO.md               como abrir o site do ESP32 na apresentação (e o plano B)
+├── CONEXAO.md               como conectar o notebook ao site do ESP32
 ├── ABRIR-AQUI.html          página de entrada: site do ESP32 ou site simulado
 ├── .githooks/pre-commit     barra commit com pagina.h desatualizado
 └── gerar-pagina.ps1         converte web/index.html em pagina.h

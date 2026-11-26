@@ -8,8 +8,8 @@ Procedimento para o site exibir os dados coletados pelo ESP32.
    celular.
 3. O display mostra o IP do ESP32 (por exemplo, `192.168.43.120`). No notebook,
    abra o arquivo `ABRIR-AQUI.html`, digite o IP e clique em *Abrir site do ESP32*.
-4. Se a conexão não funcionar, use o site simulado (botão 2 do `ABRIR-AQUI.html`),
-   que funciona sem o ESP32 e sem internet.
+4. O botão 2 do `ABRIR-AQUI.html` abre o site em modo simulado, que gera os
+   próprios preços e demonstra a interface sem o ESP32 e sem internet.
 
 ## Rede gravada no ESP32
 
